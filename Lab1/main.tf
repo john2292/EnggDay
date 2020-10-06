@@ -1,0 +1,72 @@
+terraform {
+required_providers {
+    google = {
+      version = "~> 3.41.0"
+      source = "hashicorp/google"
+    }
+}
+
+}
+
+
+provider "google" {
+  
+  project = var.project
+  region  = var.region
+  zone    = var.zone
+}
+
+
+resource "google_compute_network" "vpc_network" {
+  name = "terraform-network"
+  auto_create_subnetworks = false
+
+}
+
+resource "google_compute_subnetwork" "vpc_subnet1" {
+  ip_cidr_range = "10.2.0.0/16"
+  name = "terraform-subnet1"
+  network = google_compute_network.vpc_network.id
+}
+
+resource "google_compute_subnetwork" "vpc_subnet2" {
+  ip_cidr_range = "10.3.0.0/16"
+  region = "us-east1"
+  name = "terraform-subnet2"
+  network = google_compute_network.vpc_network.id
+}
+
+
+resource "google_compute_instance" "vm_instance" {
+  machine_type = "f1-micro"
+  name = "terraform-instance"
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-9"
+    }
+  }
+  network_interface {
+    subnetwork = google_compute_subnetwork.vpc_subnet1.id
+    access_config {
+
+    }
+  }
+
+metadata_startup_script = "sudo apt install apache2 -y;sudo systemctl start apache2"
+
+}
+
+resource "google_compute_firewall" "default" {
+  name    = "terraform-firewall"
+  network = google_compute_network.vpc_network.name
+
+   allow {
+    protocol = "icmp"
+  } 
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "8080", "1000-2000","22"]
+  }
+
+}

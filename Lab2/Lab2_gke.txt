@@ -1,0 +1,227 @@
+---------
+terraform.tfvars
+---------
+
+project_id = "sincere-bongo-291306"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+
+-----------
+versions.tf
+-----------
+
+terraform {
+  required_version = ">= 0.12"
+}
+
+
+-----------
+vpc.tf
+-----------
+
+variable "project_id" {
+  description = "project id"
+}
+
+variable "region" {
+  description = "region"
+}
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+# VPC
+resource "google_compute_network" "vpc" {
+  name                    = "${var.project_id}-vpc"
+  auto_create_subnetworks = "false"
+}
+
+# Subnet
+resource "google_compute_subnetwork" "subnet" {
+  name          = "${var.project_id}-subnet"
+  region        = var.region
+  network       = google_compute_network.vpc.name
+  ip_cidr_range = "10.10.0.0/24"
+
+}
+
+output "region" {
+  value       = var.region
+  description = "region"
+}
+
+
+
+--------
+gke.tf
+---------
+
+# Variables 
+variable "gke_username" {
+  default     = ""
+  description = "gke username"
+}
+
+variable "gke_password" {
+  default     = ""
+  description = "gke password"
+}
+
+
+# GKE cluster
+resource "google_container_cluster" "primary" {
+  name     = "${var.project_id}-gke"
+  location = var.region
+ 
+  remove_default_node_pool = true
+  initial_node_count       = 1
+
+  network    = google_compute_network.vpc.name
+  subnetwork = google_compute_subnetwork.subnet.name
+
+  master_auth {
+    username = var.gke_username
+    password = var.gke_password
+
+    client_certificate_config {
+      issue_client_certificate = false
+    }
+  }
+}
+
+#Node pool
+resource "google_container_node_pool" "primary_preemptible_nodes" {
+  name       = "my-node-pool"
+  location   = "us-central1"
+  cluster    = google_container_cluster.primary.name
+  node_count = 1
+
+  node_config {
+    preemptible  = true
+    machine_type = "n1-standard-1"
+
+    metadata = {
+      disable-legacy-endpoints = "true"
+    }
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring",
+    ]
+  }
+}
+
+output "kubernetes_cluster_name" {
+  value       = google_container_cluster.primary.name
+  description = "GKE Cluster Name"
+}
+
+
+-----------
+Deploy kubernetes dashboard
+
+gcloud container clusters get-credentials  sincere-bongo-291306-gke	 --region us-central1
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0/aio/deploy/recommended.yaml
+kubectl proxy
+http://127.0.0.1:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+kubectl apply -f kubernetes-dashboard-admin.rbac.yaml
+kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | sls admin-user | ForEach-Object { $_ -Split '\s+' } | Select -First 1)
+
+
+-------------
+kubernetes.tf
+terraform init
+terraform apply
+---------
+
+terraform {
+  required_providers {
+    kubernetes = {
+      source = "hashicorp/kubernetes"
+    }
+  }
+}
+
+provider "kubernetes" {}
+
+
+# Kubernetes Deployment 
+
+resource "kubernetes_deployment" "nginx" {
+  metadata {
+    name = "scalable-nginx-example"
+    labels = {
+      App = "ScalableNginxExample"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "ScalableNginxExample"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "ScalableNginxExample"
+        }
+      }
+      spec {
+        container {
+          image = "nginx:1.7.8"
+          name  = "example"
+
+          port {
+            container_port = 80
+          }
+
+          resources {
+            limits {
+              cpu    = "0.5"
+              memory = "512Mi"
+            }
+            requests {
+              cpu    = "250m"
+              memory = "50Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# Kubernetes Services
+
+resource "kubernetes_service" "nginx" {
+  metadata {
+    name = "nginx-example"
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.nginx.spec.0.template.0.metadata[0].labels.App
+    }
+    port {
+      port        = 80
+      target_port = 80
+    }
+
+    type = "LoadBalancer"
+  }
+}
+
+output "lb_ip" {
+  value = kubernetes_service.nginx.load_balancer_ingress[0].ip
+}
+
+
+----------
+change replicas to 4
+validate nginx url
+-----------

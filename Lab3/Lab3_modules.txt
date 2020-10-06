@@ -1,0 +1,14 @@
+########
+Open Lab3 modules
+Create 2 bucket using modules
+
+#########
+Clean up lab1 state and use gcs backend
+########
+
+
+backend "gcs" {
+    bucket  = "muhasin_bucket"
+    prefix  = "terraform/state"
+  }
+  
